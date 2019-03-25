@@ -1,0 +1,89 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Configuration;
+using System.Data;
+using System.Data.SqlClient;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Conduent.MCS.TMSMigration.LoadFromOOMFeed
+{
+    class FeedData
+    {
+        public string ID { get; set; }
+        public string PDate { get; set; }
+        public string IDate { get; set; }
+        public string MDate { get; set; }
+        public string SId { get; set; }
+
+        public static void Save(List<FeedData> jobs)
+        {
+            //var AllJobs = from job in jobs.AsEnumerable()
+            //              select job;
+
+            DataTable dt = getTable(jobs);
+
+
+            using (SqlConnection connection = new SqlConnection(ConfigurationManager.AppSettings["DBConnectionString"]))
+            {
+                using (SqlCommand command = new SqlCommand("", connection))
+                {
+                    connection.Open();
+                    SqlTransaction transaction = connection.BeginTransaction();
+
+                    using (var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction))
+                    {
+                        bulkCopy.BulkCopyTimeout = 100;
+
+                        //Verify Table Exists in DB
+                        bulkCopy.DestinationTableName = "dbo.TempTblDocuments";
+
+                        try
+                        {
+                            bulkCopy.WriteToServer(dt);
+
+                            //transaction.Commit();
+
+                            command.CommandText = "SPName";
+                            command.CommandType = CommandType.StoredProcedure;
+                            command.CommandTimeout = 9000;
+                            command.Transaction = transaction;
+
+                            command.ExecuteNonQuery();
+                        }
+                        catch (Exception ex)
+                        {                            
+                            transaction.Rollback();
+                            connection.Close();
+
+                            throw ex;
+                        }
+                        transaction.Commit();
+                    }
+
+                }
+            }
+        }
+
+        private static DataTable getTable(List<FeedData> jobs)
+        {
+            PropertyDescriptorCollection props = TypeDescriptor.GetProperties(typeof(FeedData));
+            DataTable table = new DataTable();
+            for (int i = 0; i < props.Count; i++)
+            {
+                PropertyDescriptor prop = props[i];
+                table.Columns.Add(prop.Name, Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType);
+            }
+            object[] values = new object[props.Count];
+            foreach (FeedData item in jobs)
+            {
+                for (int i = 0; i < values.Length; i++)
+                    values[i] = props[i].GetValue(item) ?? DBNull.Value;
+                table.Rows.Add(values);
+            }
+            return table;
+        }
+    }
+}
